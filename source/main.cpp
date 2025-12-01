@@ -10,6 +10,8 @@
 #include <string>
 #include <cstring>
 #include "base64.hpp"
+#include <math.h>
+#include <array>
 extern "C" {
 #include "armadillo.h"
 #include "strext.h"
@@ -64,6 +66,21 @@ size_t checkAvailableHeap() {
 		allocation = malloc(startSize);
 	}
 	return startSize - (1024 * 1024);
+}
+
+double calculateEntropy(uint8_t* data, size_t size) {
+	double entropy = 0;
+	for (size_t i = 0; i < size; i++) {
+		if (data[i] == 0)
+			continue;
+		double p = (float)data[i] / (float)size;
+		entropy -= p * (log(p) / log(256.d));
+	}
+	return entropy;
+}
+
+bool entropyCompare(std::array<uint8_t, 32> key1, std::array<uint8_t, 32> key2) {
+	return calculateEntropy(&key1[0], 32) < calculateEntropy(&key2[0], 32);
 }
 
 bool checkIfUE4game() {
@@ -177,7 +194,6 @@ bool searchInRodata() {
 							uintptr_t part_1_ptr = offset_adrp + (q_reg < q_reg_2 ? offset : offset_2);
 							uintptr_t part_2_ptr = offset_adrp + (q_reg < q_reg_2 ? offset_2 : offset);
 							parts.push_back(std::make_pair(part_1_ptr, part_2_ptr));
-							break;
 						}
 						else {
 							insn = 0;
@@ -201,7 +217,6 @@ bool searchInRodata() {
 							uintptr_t part_1_ptr = (q_reg_0_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
 							uintptr_t part_2_ptr = (q_reg_1_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
 							parts.push_back(std::make_pair(part_1_ptr, part_2_ptr));
-							break;
 						}
 					}
 					else if (insn -> instr_id == AD_INSTR_LDP && insn -> operands[0].op_reg.rtbl[0][0] == 'q' && insn -> operands[1].op_reg.rtbl[0][0] == 'q') {
@@ -246,24 +261,29 @@ bool searchInRodata() {
 		i++;
 	}
 	if (parts.size()) {
+		std::vector<std::array<uint8_t, 32>> keys;
+		for (size_t i = 0; i < parts.size(); i++) {
+			std::array<uint8_t, 32> key;
+			dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
+			dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+			keys.push_back(key);
+		}
+		std::sort(keys.begin(), keys.end(), entropyCompare);
 		FILE* file = fopen(path, "w");
 		if (file) {
-			for (size_t i = 0; i < parts.size(); i++) {
-				memset(key, 0, sizeof(key));
-				dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
-				dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+			for (size_t x = 0; x < parts.size(); x++) {
 				if (parts.size() > 1) {
-					printf("Candidate %lu: ", i);
+					printf("Candidate %lu: ", x);
 				}
 				else printf("Key is: ");
-				for (size_t i = 0; i < sizeof(key); i++) {
-					printf("%02X", key[i]);
+				for (size_t i = 0; i < 32; i++) {
+					printf("%02X", keys[x][i]);
 				}
 				printf("\n");
-				std::string base64_encoded = base64_encode(&key[0], sizeof(key));
+				std::string base64_encoded = base64_encode(&keys[x][0], 32);
 				printf("Base64: %s\n\n", base64_encoded.c_str());
-				for (size_t i = 0; i < sizeof(key); i++) {
-					fprintf(file, "%02X", key[i]);
+				for (size_t i = 0; i < 32; i++) {
+					fprintf(file, "%02X", keys[x][i]);
 				}
 				fprintf(file, "\n");
 				fprintf(file, "%s", base64_encoded.c_str());
@@ -343,24 +363,29 @@ bool searchInRodataV6() {
 		i++;
 	}
 	if (parts.size()) {
+		std::vector<std::array<uint8_t, 32>> keys;
+		for (size_t i = 0; i < parts.size(); i++) {
+			std::array<uint8_t, 32> key;
+			dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
+			dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+			keys.push_back(key);
+		}
+		std::sort(keys.begin(), keys.end(), entropyCompare);
 		FILE* file = fopen(path, "w");
 		if (file) {
-			for (size_t i = 0; i < parts.size(); i++) {
-				memset(key, 0, sizeof(key));
-				dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
-				dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+			for (size_t x = 0; x < parts.size(); x++) {
 				if (parts.size() > 1) {
-					printf("Candidate %lu: ", i);
+					printf("Candidate %lu: ", x);
 				}
 				else printf("Key is: ");
-				for (size_t i = 0; i < sizeof(key); i++) {
-					printf("%02X", key[i]);
+				for (size_t i = 0; i < 32; i++) {
+					printf("%02X", keys[x][i]);
 				}
 				printf("\n");
-				std::string base64_encoded = base64_encode(&key[0], sizeof(key));
+				std::string base64_encoded = base64_encode(&keys[x][0], 32);
 				printf("Base64: %s\n\n", base64_encoded.c_str());
-				for (size_t i = 0; i < sizeof(key); i++) {
-					fprintf(file, "%02X", key[i]);
+				for (size_t i = 0; i < 32; i++) {
+					fprintf(file, "%02X", keys[x][i]);
 				}
 				fprintf(file, "\n");
 				fprintf(file, "%s", base64_encoded.c_str());

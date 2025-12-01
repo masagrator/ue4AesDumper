@@ -73,7 +73,7 @@ double calculateEntropy(uint8_t* data, size_t size) {
 	for (size_t i = 0; i < size; i++) {
 		if (data[i] == 0)
 			continue;
-		double p = (float)data[i] / (float)size;
+		double p = (double)data[i] / (double)size;
 		entropy -= p * (log(p) / log(256.d));
 	}
 	return entropy;
@@ -566,3 +566,4 @@ int main(int argc, char* argv[])
 	consoleExit(NULL);
 	return 0;
 }
+

@@ -19,6 +19,7 @@ DmntCheatProcessMetadata cheatMetadata = {0};
 u64 mappings_count = 0;
 MemoryInfo* memoryInfoBuffers = 0;
 char path[128] = "";
+uint8_t utf_encoding = 0;
 
 bool isServiceRunning(const char *serviceName) {	
 	Handle handle;	
@@ -276,7 +277,103 @@ bool searchInRodata() {
 		}
 		return true;
 	}
-	printf("No decryption key was found!\n");
+	return false;
+}
+
+uint8_t patternV6[8] = {0x20, 0x69, 0xE8, 0x3C, 0x00, 0x68, 0xA8, 0x3C};
+
+bool searchInRodataV6() {
+	size_t i = 0;
+	printf("Mapping %ld / %ld\r", i+1, mappings_count);
+	consoleUpdate(NULL);
+	std::vector<std::pair<uintptr_t, uintptr_t>> parts;
+	while (i < mappings_count) {
+		if ((memoryInfoBuffers[i].addr < cheatMetadata.main_nso_extents.base) || (memoryInfoBuffers[i].addr > cheatMetadata.main_nso_extents.base + cheatMetadata.main_nso_extents.size) || (memoryInfoBuffers[i].perm & Perm_Rx) != Perm_Rx) {
+			i++;
+			continue;
+		}
+		if (memoryInfoBuffers[i].size > 200'000'000) {
+			i++;
+			continue;
+		}
+		char* buffer_c = new char[memoryInfoBuffers[i].size];
+		dmntchtReadCheatProcessMemory(memoryInfoBuffers[i].addr, (void*)buffer_c, memoryInfoBuffers[i].size);
+		for (size_t x = 0; x < (memoryInfoBuffers[i].size - 4); x += 4) {
+			if (!memcmp(&buffer_c[x], &patternV6[0], 8)) {
+				ad_insn *insn = NULL;
+				uint32_t instruction = *(uint32_t*)(&buffer_c[x - 4]);
+				ArmadilloDisassemble(instruction, memoryInfoBuffers[i].addr + (x - 4), &insn);
+				if (insn) {
+					if (insn -> instr_id != AD_INSTR_NOP) {
+						ArmadilloDone(&insn);
+						insn = 0;
+						continue;
+					}
+					ArmadilloDone(&insn);
+					insn = 0;
+					uint32_t instruction = *(uint32_t*)(&buffer_c[x - 8]);
+					ArmadilloDisassemble(instruction, memoryInfoBuffers[i].addr + (x - 8), &insn);
+					if (!insn) {
+						continue;
+					}
+					if (insn -> instr_id != AD_INSTR_ADD || insn -> operands[0].op_reg.rn != 9 || insn -> operands[2].type != AD_OP_IMM) {
+						ArmadilloDone(&insn);
+						insn = 0;
+						continue;
+					}
+					auto addend = insn -> operands[2].op_imm.bits;
+					ArmadilloDone(&insn);
+					insn = 0;
+					instruction = *(uint32_t*)(&buffer_c[x - 12]);
+					ArmadilloDisassemble(instruction, memoryInfoBuffers[i].addr + (x - 12), &insn);
+					if (insn -> instr_id != AD_INSTR_ADRP || insn -> operands[0].op_reg.rn != 9) {
+						ArmadilloDone(&insn);
+						insn = 0;
+						continue;
+					}
+					uintptr_t pointer = insn -> operands[1].op_imm.bits + addend;
+					ArmadilloDone(&insn);
+					insn = 0;
+					parts.push_back(std::make_pair(pointer, pointer + 16));
+				}
+				else printf("Decoding error!\n");
+			}
+		}
+		delete[] buffer_c;
+		i++;
+	}
+	if (parts.size()) {
+		FILE* file = fopen(path, "w");
+		if (file) {
+			for (size_t i = 0; i < parts.size(); i++) {
+				memset(key, 0, sizeof(key));
+				dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
+				dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+				if (parts.size() > 1) {
+					printf("Candidate %lu: ", i);
+				}
+				else printf("Key is: ");
+				for (size_t i = 0; i < sizeof(key); i++) {
+					printf("%02X", key[i]);
+				}
+				printf("\n");
+				std::string base64_encoded = base64_encode(&key[0], sizeof(key));
+				printf("Base64: %s\n\n", base64_encoded.c_str());
+				for (size_t i = 0; i < sizeof(key); i++) {
+					fprintf(file, "%02X", key[i]);
+				}
+				fprintf(file, "\n");
+				fprintf(file, "%s", base64_encoded.c_str());
+				fprintf(file, "\n\n");
+			}
+			fclose(file);
+			printf("Saved data to:\n%s\n", path);
+		}
+		else {
+			printf("Couldn't open file:\n%s\n", path);
+		}
+		return true;
+	}
 	return false;
 }
 
@@ -355,16 +452,14 @@ int main(int argc, char* argv[])
 		if (res)
 			printf("dmntchtGetCheatProcessMappings ret: 0x%x\n", res);
 
-		//Test run
-
 		if (checkIfUE4game()) {
-
+			printf("\nTool works on assumption that PAKs are encrypted!\nNot finding key is not a proof that PAKs are not encrypted!\n");
 			uint64_t BID = 0;
 			memcpy(&BID, &(cheatMetadata.main_nso_build_id), 8);
 			mkdir("sdmc:/switch/ue4AesDumper/", 777);
 			snprintf(path, sizeof(path), "sdmc:/switch/ue4AesDumper/%016lX/", cheatMetadata.title_id);
 			mkdir(path, 777);
-			snprintf(path, sizeof(path), "sdmc:/switch/ue4AesDumper/%016lX/%016lX.log", cheatMetadata.title_id, __builtin_bswap64(BID));	
+			snprintf(path, sizeof(path), "sdmc:/switch/ue4AesDumper/%016lX/%016lX.log", cheatMetadata.title_id, __builtin_bswap64(BID));
 			bool file_exists = false;
 			FILE* text_file = fopen(path, "r");
 			if (text_file) {
@@ -396,7 +491,9 @@ int main(int argc, char* argv[])
 				printf("Searching RAM...\n\n");
 				consoleUpdate(NULL);
 				appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
-				searchInRodata();
+				bool found = searchInRodata();
+				if (!found) found = searchInRodataV6();
+				if (!found) printf("No decryption key was found!\n");
 				printf(CONSOLE_BLUE "\n---------------------------------------------\n\n" CONSOLE_RESET);
 				printf(CONSOLE_WHITE "Search is finished!\n");
 				consoleUpdate(NULL);

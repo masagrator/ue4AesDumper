@@ -1,5 +1,3 @@
-//Source of snippet: https://stackoverflow.com/a/13935718/10991159
-
 #include "base64.hpp"
 
 static const std::string base64_chars =
@@ -92,5 +90,4 @@ std::vector<BYTE> base64_decode(std::string const& encoded_string) {
   }
 
   return ret;
-
 }

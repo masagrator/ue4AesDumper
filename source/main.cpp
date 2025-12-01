@@ -111,8 +111,7 @@ bool searchInRodata() {
 	size_t i = 0;
 	printf("Mapping %ld / %ld\r", i+1, mappings_count);
 	consoleUpdate(NULL);
-	uintptr_t part_1_ptr = 0;
-	uintptr_t part_2_ptr = 0;
+	std::vector<std::pair<uintptr_t, uintptr_t>> parts;
 	while (i < mappings_count) {
 		if ((memoryInfoBuffers[i].addr < cheatMetadata.main_nso_extents.base) || (memoryInfoBuffers[i].addr > cheatMetadata.main_nso_extents.base + cheatMetadata.main_nso_extents.size) || (memoryInfoBuffers[i].perm & Perm_Rx) != Perm_Rx) {
 			i++;
@@ -153,7 +152,9 @@ bool searchInRodata() {
 							continue;
 						}
 						auto x_reg_2 = insn -> operands[1].op_reg.rn;
-						auto offset_2 = insn -> operands[2].op_imm.bits;
+						size_t offset_2 = 0;
+						if (insn -> num_operands > 2)
+							offset_2 = insn -> operands[2].op_imm.bits;
 						ArmadilloDone(&insn);
 						insn = 0;
 						instruction = *(uint32_t*)(&buffer_c[x - 12]);
@@ -172,8 +173,9 @@ bool searchInRodata() {
 							continue;
 						}
 						if (x_reg == x_reg_2) {
-							part_1_ptr = offset_adrp + (q_reg < q_reg_2 ? offset : offset_2);
-							part_2_ptr = offset_adrp + (q_reg < q_reg_2 ? offset_2 : offset);
+							uintptr_t part_1_ptr = offset_adrp + (q_reg < q_reg_2 ? offset : offset_2);
+							uintptr_t part_2_ptr = offset_adrp + (q_reg < q_reg_2 ? offset_2 : offset);
+							parts.push_back(std::make_pair(part_1_ptr, part_2_ptr));
 							break;
 						}
 						else {
@@ -195,15 +197,41 @@ bool searchInRodata() {
 							}
 							uint8_t q_reg_0_x_reg = !q_reg ? x_reg : x_reg_2;
 							uint8_t q_reg_1_x_reg = !q_reg ? x_reg_2 : x_reg;
-							part_1_ptr = (q_reg_0_x_reg == x_reg_adrp ? offset_adrp : offset_2_adrp) + (q_reg_0_x_reg == x_reg_adrp ? offset : offset_2);
-							part_2_ptr = (q_reg_1_x_reg == x_reg_adrp ? offset_adrp : offset_2_adrp) + (q_reg_1_x_reg == x_reg_adrp ? offset : offset_2);
+							uintptr_t part_1_ptr = (q_reg_0_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
+							uintptr_t part_2_ptr = (q_reg_1_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
+							parts.push_back(std::make_pair(part_1_ptr, part_2_ptr));
 							break;
 						}
 					}
 					else if (insn -> instr_id == AD_INSTR_LDP && insn -> operands[0].op_reg.rtbl[0][0] == 'q' && insn -> operands[1].op_reg.rtbl[0][0] == 'q') {
-						printf("Not implemented!\n");
+						auto x_reg = insn -> operands[2].op_reg.rn;
 						ArmadilloDone(&insn);
-						continue;
+						insn = 0;
+						instruction = *(uint32_t*)(&buffer_c[x - 8]);
+						ArmadilloDisassemble(instruction, memoryInfoBuffers[i].addr + (x - 8), &insn);
+						if (!insn) {
+							continue;
+						}
+						if (insn -> instr_id != AD_INSTR_ADD || insn -> operands[0].op_reg.rn != x_reg || insn -> operands[2].type != AD_OP_IMM) {
+							ArmadilloDone(&insn);
+							insn = 0;
+							continue;
+						}
+						auto addend = insn -> operands[2].op_imm.bits;
+						auto x_reg_check = insn -> operands[1].op_reg.rn;
+						ArmadilloDone(&insn);
+						insn = 0;
+						instruction = *(uint32_t*)(&buffer_c[x - 12]);
+						ArmadilloDisassemble(instruction, memoryInfoBuffers[i].addr + (x - 12), &insn);
+						if (insn -> instr_id != AD_INSTR_ADRP || insn -> operands[0].op_reg.rn != x_reg_check) {
+							ArmadilloDone(&insn);
+							insn = 0;
+							continue;
+						}
+						uintptr_t pointer = insn -> operands[1].op_imm.bits + addend;
+						ArmadilloDone(&insn);
+						insn = 0;						
+						parts.push_back(std::make_pair(pointer, pointer + 16));
 					}
 					else {
 						ArmadilloDone(&insn);
@@ -214,28 +242,32 @@ bool searchInRodata() {
 			}
 		}
 		delete[] buffer_c;
-		if (part_1_ptr != 0 && part_2_ptr != 0) {
-			break;
-		}
+		i++;
 	}
-	if (part_1_ptr != 0 && part_2_ptr != 0) {
-		memset(key, 0, sizeof(key));
-		dmntchtReadCheatProcessMemory(part_1_ptr, (void*)&key[0], 16);
-		dmntchtReadCheatProcessMemory(part_2_ptr, (void*)&key[16], 16);
-		printf("Key is: ");
-		for (size_t i = 0; i < sizeof(key); i++) {
-			printf("%02X", key[i]);
-		}
-		printf("\n");
-		std::string base64_encoded = base64_encode(&key[0], sizeof(key));
-		printf("Base64: %s\n\n", base64_encoded.c_str());
+	if (parts.size()) {
 		FILE* file = fopen(path, "w");
 		if (file) {
-			for (size_t i = 0; i < sizeof(key); i++) {
-				fprintf(file, "%02X", key[i]);
+			for (size_t i = 0; i < parts.size(); i++) {
+				memset(key, 0, sizeof(key));
+				dmntchtReadCheatProcessMemory(parts[i].first, (void*)&key[0], 16);
+				dmntchtReadCheatProcessMemory(parts[i].second, (void*)&key[16], 16);
+				if (parts.size() > 1) {
+					printf("Candidate %lu: ", i);
+				}
+				else printf("Key is: ");
+				for (size_t i = 0; i < sizeof(key); i++) {
+					printf("%02X", key[i]);
+				}
+				printf("\n");
+				std::string base64_encoded = base64_encode(&key[0], sizeof(key));
+				printf("Base64: %s\n\n", base64_encoded.c_str());
+				for (size_t i = 0; i < sizeof(key); i++) {
+					fprintf(file, "%02X", key[i]);
+				}
+				fprintf(file, "\n");
+				fprintf(file, "%s", base64_encoded.c_str());
+				fprintf(file, "\n\n");
 			}
-			fprintf(file, "\n");
-			fprintf(file, "%s", base64_encoded.c_str());
 			fclose(file);
 			printf("Saved data to:\n%s\n", path);
 		}
@@ -244,6 +276,7 @@ bool searchInRodata() {
 		}
 		return true;
 	}
+	printf("No decryption key was found!\n");
 	return false;
 }
 

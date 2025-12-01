@@ -1,3 +1,5 @@
+//Source of snippet: https://stackoverflow.com/a/13935718/10991159
+
 #include "base64.hpp"
 
 static const std::string base64_chars =

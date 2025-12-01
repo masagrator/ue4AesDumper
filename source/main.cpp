@@ -216,6 +216,13 @@ bool searchInRodata() {
 							uint8_t q_reg_1_x_reg = !q_reg ? x_reg_2 : x_reg;
 							uintptr_t part_1_ptr = (q_reg_0_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
 							uintptr_t part_2_ptr = (q_reg_1_x_reg == x_reg_adrp ? (offset_adrp + offset) : (offset_2_adrp + offset_2));
+							MemoryInfo info;
+							if (R_FAILED(dmntchtQueryCheatProcessMemory(&info, part_1_ptr)))
+								continue;
+							if (info.perm != Perm_R) continue;
+							if (R_FAILED(dmntchtQueryCheatProcessMemory(&info, part_2_ptr)))
+								continue;
+							if (info.perm != Perm_R) continue;
 							parts.push_back(std::make_pair(part_1_ptr, part_2_ptr));
 						}
 					}
@@ -246,7 +253,11 @@ bool searchInRodata() {
 						}
 						uintptr_t pointer = insn -> operands[1].op_imm.bits + addend;
 						ArmadilloDone(&insn);
-						insn = 0;						
+						insn = 0;
+						MemoryInfo info;
+						if (R_FAILED(dmntchtQueryCheatProcessMemory(&info, pointer)))
+							continue;
+						if (info.perm != Perm_R) continue;					
 						parts.push_back(std::make_pair(pointer, pointer + 16));
 					}
 					else {
@@ -354,6 +365,10 @@ bool searchInRodataV6() {
 					uintptr_t pointer = insn -> operands[1].op_imm.bits + addend;
 					ArmadilloDone(&insn);
 					insn = 0;
+					MemoryInfo info;
+					if (R_FAILED(dmntchtQueryCheatProcessMemory(&info, pointer)))
+						continue;
+					if (info.perm != Perm_R) continue;
 					parts.push_back(std::make_pair(pointer, pointer + 16));
 				}
 				else printf("Decoding error!\n");
